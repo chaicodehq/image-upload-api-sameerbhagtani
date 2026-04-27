@@ -1,7 +1,7 @@
 import sharp from "sharp";
 import path from "path";
 import fs from "fs";
-import { fileURLToPath, fileURLToPathBuffer } from "url";
+import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOADS_DIR = path.join(__dirname, "../../uploads");
