@@ -1,10 +1,11 @@
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { Image } from '../models/image.model.js';
-import { generateThumbnail, getImageDimensions } from '../utils/thumbnail.js';
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import { Image } from "../models/image.model.js";
+import { generateThumbnail, getImageDimensions } from "../utils/thumbnail.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const UPLOADS_DIR = path.join(__dirname, "../../uploads");
 
 /**
  * TODO: Upload image
@@ -19,11 +20,45 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * 7. Return 201 with image metadata
  */
 export async function uploadImage(req, res, next) {
-  try {
-    // Your code here
-  } catch (error) {
-    next(error);
-  }
+    try {
+        if (!req.file) {
+            return res.status(400).json({
+                error: {
+                    message: "No file uploaded",
+                },
+            });
+        }
+
+        const { filename, originalname, mimetype, size, path } = req.file;
+        const dimensions = await getImageDimensions(path);
+        const thumbnailFilename = await generateThumbnail(filename);
+
+        const { description, tags } = req.body;
+        let tagsArr = [];
+
+        if (tags) {
+            tagsArr = tags
+                .split(",")
+                .map((tag) => tag.trim())
+                .filter(Boolean);
+        }
+
+        const image = await Image.create({
+            originalName: originalname,
+            filename,
+            mimetype,
+            size,
+            width: dimensions.width,
+            height: dimensions.height,
+            thumbnailFilename,
+            description,
+            tags: tagsArr,
+        });
+
+        return res.status(201).json(image);
+    } catch (error) {
+        next(error);
+    }
 }
 
 /**
@@ -56,11 +91,58 @@ export async function uploadImage(req, res, next) {
  *    - meta: { total, page, limit, pages, totalSize }
  */
 export async function listImages(req, res, next) {
-  try {
-    // Your code here
-  } catch (error) {
-    next(error);
-  }
+    try {
+        let {
+            page = 1,
+            limit = 10,
+            search,
+            mimetype,
+            sortBy = "uploadDate",
+            sortOrder = "desc",
+        } = req.query;
+
+        page = Number(page);
+        limit = Math.min(Number(limit), 50);
+
+        const skip = (page - 1) * limit;
+
+        const filter = {};
+
+        if (search) {
+            filter.$or = [
+                { originalName: { $regex: search, $options: "i" } },
+                { description: { $regex: search, $options: "i" } },
+            ];
+        }
+
+        if (mimetype) {
+            filter.mimetype = mimetype;
+        }
+
+        const total = await Image.countDocuments(filter);
+
+        const images = await Image.find(filter)
+            .sort({ [sortBy]: sortOrder === "asc" ? 1 : -1 })
+            .skip(skip)
+            .limit(limit);
+
+        const totalSize = images.reduce((total, image) => {
+            return total + image.size;
+        }, 0);
+
+        return res.status(200).json({
+            data: images,
+            meta: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit),
+                totalSize,
+            },
+        });
+    } catch (error) {
+        next(error);
+    }
 }
 
 /**
@@ -71,11 +153,21 @@ export async function listImages(req, res, next) {
  * 3. Return 200 with image metadata
  */
 export async function getImage(req, res, next) {
-  try {
-    // Your code here
-  } catch (error) {
-    next(error);
-  }
+    try {
+        const image = await Image.findById(req.params.id);
+
+        if (!image) {
+            return res.status(404).json({
+                error: {
+                    message: "Image not found",
+                },
+            });
+        }
+
+        return res.status(200).json(image);
+    } catch (error) {
+        next(error);
+    }
 }
 
 /**
@@ -92,11 +184,35 @@ export async function getImage(req, res, next) {
  * 7. Send file using res.sendFile(filepath)
  */
 export async function downloadImage(req, res, next) {
-  try {
-    // Your code here
-  } catch (error) {
-    next(error);
-  }
+    try {
+        const image = await Image.findById(req.params.id);
+        if (!image) {
+            return res.status(404).json({
+                error: {
+                    message: "Image not found",
+                },
+            });
+        }
+
+        const filePath = path.join(UPLOADS_DIR, image.filename);
+
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({
+                error: {
+                    message: "Image not found",
+                },
+            });
+        }
+
+        res.set({
+            "Content-Type": image.mimetype,
+            "Content-Disposition": `attachment; filename=${image.originalName}`,
+        });
+
+        return res.sendFile(filePath);
+    } catch (error) {
+        next(error);
+    }
 }
 
 /**
@@ -112,11 +228,37 @@ export async function downloadImage(req, res, next) {
  * 7. Send file using res.sendFile(thumbnailPath)
  */
 export async function downloadThumbnail(req, res, next) {
-  try {
-    // Your code here
-  } catch (error) {
-    next(error);
-  }
+    try {
+        const image = await Image.findById(req.params.id);
+        if (!image) {
+            return res.status(404).json({
+                error: {
+                    message: "Image not found",
+                },
+            });
+        }
+
+        const baseName = image.filename.replace(/\.\w+$/, "");
+        const thumbnailName = `thumb-${baseName}.jpg`;
+
+        const filePath = path.join(UPLOADS_DIR, "thumbnails", thumbnailName);
+
+        if (!fs.existsSync(filePath)) {
+            return res.status(404).json({
+                error: {
+                    message: "Image not found",
+                },
+            });
+        }
+
+        res.set({
+            "Content-Type": "image/jpeg",
+        });
+
+        return res.sendFile(filePath);
+    } catch (error) {
+        next(error);
+    }
 }
 
 /**
@@ -130,9 +272,35 @@ export async function downloadThumbnail(req, res, next) {
  * 6. Return 204 (no content)
  */
 export async function deleteImage(req, res, next) {
-  try {
-    // Your code here
-  } catch (error) {
-    next(error);
-  }
+    try {
+        const image = await Image.findById(req.params.id);
+
+        if (!image) {
+            return res.status(404).json({
+                error: {
+                    message: "Image not found",
+                },
+            });
+        }
+
+        try {
+            await fs.promises.unlink(path.join(UPLOADS_DIR, image.filename));
+        } catch (err) {
+            if (err.code !== "ENOENT") throw err;
+        }
+
+        try {
+            await fs.promises.unlink(
+                path.join(UPLOADS_DIR, "thumbnails", image.thumbnailFilename),
+            );
+        } catch (err) {
+            if (err.code !== "ENOENT") throw err;
+        }
+
+        await image.deleteOne();
+
+        return res.sendStatus(204);
+    } catch (error) {
+        next(error);
+    }
 }
